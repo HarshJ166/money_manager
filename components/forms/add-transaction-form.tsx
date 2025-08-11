@@ -1,23 +1,51 @@
-"use client"
+"use client";
 
-import { useForm } from "react-hook-form"
-import { zodResolver } from "@hookform/resolvers/zod"
-import { transactionSchema, type TransactionInput } from "@/lib/validations"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
-import { useState, useTransition } from "react"
-import { useToast } from "@/hooks/use-toast"
-import { CreditCard, Wallet } from "lucide-react"
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { transactionSchema, type TransactionInput } from "@/lib/validations";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { useEffect, useState, useTransition } from "react";
+import { useToast } from "@/hooks/use-toast";
+import { CreditCard, Wallet } from "lucide-react";
+import { format } from "date-fns";
 
-const schema = transactionSchema
+const schema = transactionSchema;
 
-export default function AddTransactionForm() {
-  const { toast } = useToast()
-  const [isPending, startTransition] = useTransition()
-  const [type, setType] = useState<"credit" | "debit">("credit")
+type Tx = {
+  _id: string;
+  type: "credit" | "debit";
+  amount: number;
+  description: string;
+  category: string;
+  paymentMethod: string;
+  date: string;
+  balanceAfter: number;
+  metadata?: {
+    notes?: string;
+  };
+};
+
+export default function AddTransactionForm({
+  transaction,
+  onFinish,
+}: {
+  transaction?: Tx;
+  onFinish?: () => void;
+}) {
+  const { toast } = useToast();
+  const [isPending, startTransition] = useTransition();
+  const [type, setType] = useState<"credit" | "debit">("credit");
+
   const form = useForm<TransactionInput>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -27,27 +55,62 @@ export default function AddTransactionForm() {
       category: "Food",
       paymentMethod: "Cash",
       date: new Date(),
+      metadata: { notes: "" },
     },
-  })
+  });
+
+  useEffect(() => {
+    if (transaction) {
+      form.reset({
+        ...transaction,
+        date: new Date(transaction.date),
+      });
+      setType(transaction.type);
+    }
+  }, [transaction, form]);
 
   const onSubmit = (values: TransactionInput) => {
     startTransition(async () => {
-      const res = await fetch("/api/transactions", {
-        method: "POST",
+      const url = transaction
+        ? `/api/transactions/${transaction._id}`
+        : "/api/transactions";
+      const method = transaction ? "PUT" : "POST";
+
+      const res = await fetch(url, {
+        method,
         headers: { "content-type": "application/json" },
         body: JSON.stringify(values),
-      })
+      });
+
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        toast({ title: "Failed", description: data?.error ?? "Could not create transaction", variant: "destructive" })
-        return
+        const data = await res.json().catch(() => ({}));
+        toast({
+          title: "Failed",
+          description:
+            data?.error ??
+            `Could not ${transaction ? "update" : "create"} transaction`,
+          variant: "destructive",
+        });
+        return;
       }
-      form.reset({ ...form.getValues(), amount: 0, description: "" })
-      toast({ title: "Transaction added", description: "Balance updated." })
-      // Emit revalidation event for list components (simple)
-      document.dispatchEvent(new CustomEvent("transactions:refresh"))
-    })
-  }
+
+      if (transaction) {
+        toast({
+          title: "Transaction updated",
+          description: "Your balance has been updated.",
+        });
+      } else {
+        form.reset({ ...form.getValues(), amount: 0, description: "" });
+        toast({ title: "Transaction added", description: "Balance updated." });
+      }
+
+      // Emit revalidation event for list components
+      document.dispatchEvent(new CustomEvent("transactions:refresh"));
+      onFinish?.();
+    });
+  };
+
+  const isEditing = !!transaction;
 
   return (
     <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
@@ -55,10 +118,14 @@ export default function AddTransactionForm() {
         <button
           type="button"
           onClick={() => {
-            setType("credit")
-            form.setValue("type", "credit")
+            setType("credit");
+            form.setValue("type", "credit");
           }}
-          className={`rounded-md border p-2 text-sm ${type === "credit" ? "border-emerald-500 bg-emerald-500/10 text-emerald-400" : "border-border hover:bg-muted"}`}
+          className={`rounded-md border p-2 text-sm transition-colors ${
+            type === "credit"
+              ? "border-emerald-500 bg-emerald-500/10 text-emerald-400"
+              : "border-border hover:bg-muted"
+          }`}
           aria-pressed={type === "credit"}
         >
           <Wallet className="mr-1 inline h-4 w-4" />
@@ -67,10 +134,14 @@ export default function AddTransactionForm() {
         <button
           type="button"
           onClick={() => {
-            setType("debit")
-            form.setValue("type", "debit")
+            setType("debit");
+            form.setValue("type", "debit");
           }}
-          className={`rounded-md border p-2 text-sm ${type === "debit" ? "border-rose-500 bg-rose-500/10 text-rose-400" : "border-border hover:bg-muted"}`}
+          className={`rounded-md border p-2 text-sm transition-colors ${
+            type === "debit"
+              ? "border-rose-500 bg-rose-500/10 text-rose-400"
+              : "border-border hover:bg-muted"
+          }`}
           aria-pressed={type === "debit"}
         >
           <CreditCard className="mr-1 inline h-4 w-4" />
@@ -89,15 +160,23 @@ export default function AddTransactionForm() {
           {...form.register("amount", { valueAsNumber: true })}
         />
         {form.formState.errors.amount && (
-          <p className="text-xs text-rose-400">{form.formState.errors.amount.message}</p>
+          <p className="text-xs text-rose-400">
+            {form.formState.errors.amount.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="description">Description</Label>
-        <Input id="description" placeholder="e.g. Groceries at Big Bazaar" {...form.register("description")} />
+        <Input
+          id="description"
+          placeholder="e.g. Groceries"
+          {...form.register("description")}
+        />
         {form.formState.errors.description && (
-          <p className="text-xs text-rose-400">{form.formState.errors.description.message}</p>
+          <p className="text-xs text-rose-400">
+            {form.formState.errors.description.message}
+          </p>
         )}
       </div>
 
@@ -105,7 +184,7 @@ export default function AddTransactionForm() {
         <div className="space-y-2">
           <Label>Payment Method</Label>
           <Select
-            defaultValue={form.getValues("paymentMethod")}
+            value={form.watch("paymentMethod")}
             onValueChange={(v) => form.setValue("paymentMethod", v as any)}
           >
             <SelectTrigger>
@@ -124,7 +203,10 @@ export default function AddTransactionForm() {
 
         <div className="space-y-2">
           <Label>Category</Label>
-          <Select defaultValue={form.getValues("category")} onValueChange={(v) => form.setValue("category", v)}>
+          <Select
+            value={form.watch("category")}
+            onValueChange={(v) => form.setValue("category", v)}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Select category" />
             </SelectTrigger>
@@ -145,7 +227,11 @@ export default function AddTransactionForm() {
         <Input
           id="date"
           type="datetime-local"
-          defaultValue={new Date().toISOString().slice(0, 16)}
+          value={
+            form.watch("date")
+              ? format(new Date(form.watch("date")), "yyyy-MM-dd'T'HH:mm")
+              : ""
+          }
           onChange={(e) => form.setValue("date", new Date(e.target.value))}
         />
       </div>
@@ -155,13 +241,23 @@ export default function AddTransactionForm() {
         <Textarea
           id="notes"
           placeholder="Optional notes"
-          onChange={(e) => form.setValue("metadata", { notes: e.target.value })}
+          {...form.register("metadata.notes")}
         />
       </div>
 
-      <Button type="submit" className="w-full bg-emerald-600 text-white hover:bg-emerald-500" disabled={isPending}>
-        {isPending ? "Adding..." : "Add Transaction"}
+      <Button
+        type="submit"
+        className="w-full bg-emerald-600 text-white hover:bg-emerald-500"
+        disabled={isPending}
+      >
+        {isPending
+          ? isEditing
+            ? "Saving..."
+            : "Adding..."
+          : isEditing
+          ? "Save Changes"
+          : "Add Transaction"}
       </Button>
     </form>
-  )
+  );
 }
